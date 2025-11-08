@@ -135,23 +135,70 @@ def _build_output_path(init_state: Iterable[float]) -> Path:
     return output_dir / filename
 
 
-def generate_traj(params: PendulumParams, init_state: Sequence[float]) -> Path:
+def generate_traj(params: PendulumParams, init_state: Sequence[float], verbose = True) -> Path:
     """Generate a trajectory CSV containing theta1/theta2 columns."""
     _, traj = integrate_trajectory(params, init_state)
     angles = traj[:, [0, 2]]
     angles = ((angles + np.pi) % (2 * np.pi)) - np.pi  # wrap to [-pi, pi]
     output_path = _build_output_path(normalize_init_state(init_state))
     np.savetxt(output_path, angles, delimiter=",", header="theta1,theta2", comments="")
+    if verbose:
+        print(f"Saved trajectory to {output_path}")
     return output_path
+
+
+def generate_initial_conditions(
+    E: float,
+    n: int,
+    params: PendulumParams,
+    rng: np.random.Generator | None = None,
+) -> list[tuple[float, float, float, float]]:
+    """Generate n initial (theta_deg, w1, theta_deg, w2) tuples near the energy surface."""
+    rng = rng or np.random.default_rng()
+    inits: list[tuple[float, float, float, float]] = []
+
+    m1, m2 = params.M1, params.M2
+    l1, l2 = params.L1, params.L2
+    g = params.G
+
+    attempts = 0
+    max_attempts = n * 50
+
+    while len(inits) < n:
+        attempts += 1
+        if attempts > max_attempts:
+            raise RuntimeError(f"Could not generate {n} initial conditions within {max_attempts} attempts.")
+
+        th1 = rng.uniform(0, 2 * np.pi)
+        th2 = rng.uniform(0, 2 * np.pi)
+
+        V = -(m1 + m2) * g * l1 * math.cos(th1) - m2 * g * l2 * math.cos(th2)
+        KE_avail = E - V
+        if KE_avail <= 0:
+            continue
+
+        r = rng.random()
+        KE1 = r * KE_avail
+        KE2 = (1 - r) * KE_avail
+
+        w1 = math.sqrt(2 * KE1 / ((m1 + m2) * l1 * l1))
+        w2 = math.sqrt(2 * KE2 / (m2 * l2 * l2))
+
+        w1 = math.copysign(w1, rng.normal())
+        w2 = math.copysign(w2, rng.normal())
+
+        inits.append((math.degrees(th1), w1, math.degrees(th2), w2))
+
+    return inits
 
 
 def main() -> None:
     params = PendulumParams()
-    for theta1 in range(0, 360, 10):
-        for theta2 in range(0, 360, 10):
-            init_conditions = (theta1, 0.0, theta2, 0.0)
-            output_path = generate_traj(params, init_conditions)
-            print(f"Saved trajectory to {output_path}")
+    target_energy = 5.0  # Joules
+    init_conditions = generate_initial_conditions(target_energy, 1_000, params)
+    output_paths = [generate_traj(params, init_state) for init_state in init_conditions]
+    print(f"\nSaved {len(output_paths)} trajectories to paths/")
+    # print(init_conditions)
 
 
 if __name__ == "__main__":
