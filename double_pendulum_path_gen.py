@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Sequence, Tuple, cast
 
@@ -24,6 +24,66 @@ class PendulumParams:
     @property
     def total_length(self) -> float:
         return self.L1 + self.L2
+
+
+@dataclass
+class RunContext:
+    """Tracks metadata for the current batch/run of generated trajectories."""
+
+    output_dir: Path | None = None
+    total_energy: float | None = None
+    initial_conditions: list[tuple[float, float, float, float]] = field(default_factory=list)
+
+
+RUN_DIR_PREFIX = "paths"
+_RUN_CONTEXT = RunContext()
+
+
+def _next_run_directory(prefix: str = RUN_DIR_PREFIX) -> Path:
+    """Return the next available numbered directory (paths1, paths2, ...)."""
+    idx = 1
+    while True:
+        candidate = Path(f"{prefix}{idx}")
+        if not candidate.exists():
+            return candidate
+        idx += 1
+
+
+def _ensure_run_directory() -> Path:
+    """Create (if needed) and return the directory for the current run."""
+    if _RUN_CONTEXT.output_dir is None:
+        run_dir = _next_run_directory()
+        run_dir.mkdir(parents=True, exist_ok=True)
+        _RUN_CONTEXT.output_dir = run_dir
+    return _RUN_CONTEXT.output_dir
+
+
+def _register_initial_condition(condition: tuple[float, float, float, float]) -> None:
+    """Track initial conditions so the README can list them."""
+    if condition not in _RUN_CONTEXT.initial_conditions:
+        _RUN_CONTEXT.initial_conditions.append(condition)
+
+
+def _write_run_readme() -> None:
+    """Write/overwrite README.txt summarizing the run metadata."""
+    if _RUN_CONTEXT.output_dir is None:
+        return
+    readme_path = _RUN_CONTEXT.output_dir / "README.txt"
+    energy = "unknown" if _RUN_CONTEXT.total_energy is None else f"{_RUN_CONTEXT.total_energy}"
+    lines = [f"Initial total energy: {energy}"]
+    if _RUN_CONTEXT.initial_conditions:
+        lines.extend(", ".join(f"{value}" for value in condition) for condition in _RUN_CONTEXT.initial_conditions)
+    readme_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _start_new_run(total_energy: float | None, initial_conditions: Sequence[tuple[float, float, float, float]] | None) -> None:
+    """Reset run context so the next batch writes into a fresh folder."""
+    _RUN_CONTEXT.output_dir = None
+    _RUN_CONTEXT.total_energy = total_energy
+    if initial_conditions:
+        _RUN_CONTEXT.initial_conditions = [tuple(condition) for condition in initial_conditions]
+    else:
+        _RUN_CONTEXT.initial_conditions = []
 
 
 def derivs(t: float, state: np.ndarray, params: PendulumParams) -> np.ndarray:
@@ -130,18 +190,20 @@ def _safe_value_for_filename(value: float) -> str:
 def _build_output_path(init_state: Iterable[float]) -> Path:
     safe_parts = [_safe_value_for_filename(v) for v in init_state]
     filename = f"{safe_parts[0]}-{safe_parts[1]}-{safe_parts[2]}-{safe_parts[3]}.csv"
-    output_dir = Path("paths")
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = _ensure_run_directory()
     return output_dir / filename
 
 
 def generate_traj(params: PendulumParams, init_state: Sequence[float], verbose = True) -> Path:
     """Generate a trajectory CSV containing theta1/theta2 columns."""
-    _, traj = integrate_trajectory(params, init_state)
+    normalized_state = normalize_init_state(init_state)
+    _, traj = integrate_trajectory(params, normalized_state)
     angles = traj[:, [0, 2]]
     angles = ((angles + np.pi) % (2 * np.pi)) - np.pi  # wrap to [-pi, pi]
-    output_path = _build_output_path(normalize_init_state(init_state))
+    output_path = _build_output_path(normalized_state)
     np.savetxt(output_path, angles, delimiter=",", header="theta1,theta2", comments="")
+    _register_initial_condition(normalized_state)
+    _write_run_readme()
     if verbose:
         print(f"Saved trajectory to {output_path}")
     return output_path
@@ -243,16 +305,17 @@ def generate_initial_conditions(
 
         inits.append((math.degrees(th1), w1, math.degrees(th2), w2))
 
+    _start_new_run(E, inits)
     return inits
 
 
 def main() -> None:
     params = PendulumParams()
-    target_energy = 58.0  # Joules
-    init_conditions = generate_initial_conditions(target_energy, 1_000, params, initial_push=False)
-    # output_paths = [generate_traj(params, init_state) for init_state in init_conditions]
-    # print(f"\nSaved {len(output_paths)} trajectories to paths/")
-    print(init_conditions)
+    target_energy = 40.0  # Joules
+    init_conditions = generate_initial_conditions(target_energy, 10, params, initial_push=False)
+    output_paths = [generate_traj(params, init_state) for init_state in init_conditions]
+    print(f"\nSaved {len(output_paths)} trajectories.")
+    # print(init_conditions)
 
 
 if __name__ == "__main__":
