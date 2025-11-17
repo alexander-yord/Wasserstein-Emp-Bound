@@ -33,6 +33,7 @@ class RunContext:
     output_dir: Path | None = None
     total_energy: float | None = None
     initial_conditions: list[tuple[float, float, float, float]] = field(default_factory=list)
+    lyapunov_exponent: float | None = None
 
 
 RUN_DIR_PREFIX = "paths"
@@ -71,6 +72,8 @@ def _write_run_readme() -> None:
     readme_path = _RUN_CONTEXT.output_dir / "README.txt"
     energy = "unknown" if _RUN_CONTEXT.total_energy is None else f"{_RUN_CONTEXT.total_energy}"
     lines = [f"Initial total energy: {energy}"]
+    if _RUN_CONTEXT.lyapunov_exponent is not None:
+        lines.append(f"Estimated Lyapunov exponent: {_RUN_CONTEXT.lyapunov_exponent:.6f}")
     if _RUN_CONTEXT.initial_conditions:
         lines.extend(", ".join(f"{value}" for value in condition) for condition in _RUN_CONTEXT.initial_conditions)
     readme_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -80,6 +83,7 @@ def _start_new_run(total_energy: float | None, initial_conditions: Sequence[tupl
     """Reset run context so the next batch writes into a fresh folder."""
     _RUN_CONTEXT.output_dir = None
     _RUN_CONTEXT.total_energy = total_energy
+    _RUN_CONTEXT.lyapunov_exponent = None
     if initial_conditions:
         _RUN_CONTEXT.initial_conditions = [tuple(condition) for condition in initial_conditions]
     else:
@@ -144,6 +148,31 @@ def integrate_trajectory(params: PendulumParams, init_state_deg: Sequence[float]
         trajectory[i] = trajectory[i - 1] + derivs(t[i - 1], trajectory[i - 1], params) * params.dt
 
     return t, trajectory
+
+
+def estimate_lyapunov_exponent(
+    params: PendulumParams,
+    init_state_deg: Sequence[float],
+    perturbation_deg: float = 1e-3,
+) -> float:
+    """
+    Estimate the dominant Lyapunov exponent by comparing a trajectory with a slightly perturbed one.
+
+    The approximation is crude but provides a qualitative sense of chaos at the requested energy level.
+    """
+    base_state = normalize_init_state(init_state_deg)
+    perturbed_state = list(base_state)
+    perturbed_state[0] += perturbation_deg
+
+    t, base_traj = integrate_trajectory(params, base_state)
+    _, pert_traj = integrate_trajectory(params, perturbed_state)
+
+    deltas = np.linalg.norm(pert_traj - base_traj, axis=1)
+    deltas = np.clip(deltas, 1e-15, None)
+
+    total_time = t[-1] if t.size > 1 else params.dt
+    lyapunov = float((np.log(deltas[-1]) - np.log(deltas[0])) / total_time)
+    return lyapunov
 
 
 def animate(params: PendulumParams, init_state: Sequence[float]) -> animation.FuncAnimation:
@@ -306,12 +335,18 @@ def generate_initial_conditions(
         inits.append((math.degrees(th1), w1, math.degrees(th2), w2))
 
     _start_new_run(E, inits)
+    if inits:
+        try:
+            lyap_estimate = estimate_lyapunov_exponent(params, inits[0])
+            _RUN_CONTEXT.lyapunov_exponent = lyap_estimate
+        except Exception as exc:  # pragma: no cover - diagnostic only
+            print(f"Warning: failed to estimate Lyapunov exponent: {exc}")
     return inits
 
 
 def main() -> None:
     params = PendulumParams()
-    target_energy = 10.0  # Joules
+    target_energy = 12.0  # Joules
     init_conditions = generate_initial_conditions(target_energy, 1_000, params, initial_push=True)
     output_paths = [generate_traj(params, init_state) for init_state in init_conditions]
     print(f"\nSaved {len(output_paths)} trajectories.")
