@@ -18,7 +18,7 @@ class PendulumParams:
     L2: float = 2.0
     M1: float = 1.0
     M2: float = 1.0
-    t_stop: float = 100.0
+    t_stop: float = 1000.0
     dt: float = 0.01
 
     @property
@@ -311,8 +311,8 @@ def generate_initial_conditions(
 
 def main() -> None:
     params = PendulumParams()
-    target_energy = 40.0  # Joules
-    init_conditions = generate_initial_conditions(target_energy, 10, params, initial_push=False)
+    target_energy = 10.0  # Joules
+    init_conditions = generate_initial_conditions(target_energy, 1_000, params, initial_push=True)
     output_paths = [generate_traj(params, init_state) for init_state in init_conditions]
     print(f"\nSaved {len(output_paths)} trajectories.")
     # print(init_conditions)
