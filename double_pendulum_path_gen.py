@@ -4,6 +4,7 @@ import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Sequence, Tuple, cast
+from scipy.integrate import solve_ivp
 
 import matplotlib.animation as animation
 import matplotlib.pyplot as plt
@@ -135,7 +136,7 @@ def normalize_init_state(init_state: Sequence[float]) -> Tuple[float, float, flo
     return cast(Tuple[float, float, float, float], tuple(normalized))
 
 
-def integrate_trajectory(params: PendulumParams, init_state_deg: Sequence[float]) -> tuple[np.ndarray, np.ndarray]:
+def integrate_trajectory_euler(params: PendulumParams, init_state_deg: Sequence[float]) -> tuple[np.ndarray, np.ndarray]:
     """Integrate the equations of motion using a simple Euler method."""
     init_state_deg = normalize_init_state(init_state_deg)
     state = np.radians(np.array(init_state_deg, dtype=float))
@@ -149,6 +150,24 @@ def integrate_trajectory(params: PendulumParams, init_state_deg: Sequence[float]
 
     return t, trajectory
 
+def integrate_trajectory(params: PendulumParams, init_state_deg: Sequence[float]) -> tuple[np.ndarray, np.ndarray]:
+    init_state_deg = normalize_init_state(init_state_deg)
+    y0 = np.radians(np.array(init_state_deg, dtype=float))
+
+    def f(t, y):
+        return derivs(t, y, params)
+
+    sol = solve_ivp(
+        f,
+        t_span=(0.0, params.t_stop),
+        y0=y0,
+        method="DOP853",   # or "RK45"
+        max_step=params.dt # controls resolution of saved points
+    )
+
+    t = sol.t
+    traj = sol.y.T  # shape (n_points, 4)
+    return t, traj
 
 def estimate_lyapunov_exponent(
     params: PendulumParams,
