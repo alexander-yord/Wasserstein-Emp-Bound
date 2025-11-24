@@ -260,6 +260,73 @@ def generate_traj(params: PendulumParams, init_state: Sequence[float], verbose =
 def generate_initial_conditions(
     E: float,
     n: int,
+    params: PendulumParams
+) -> list[tuple[float, float, float, float]]:
+    """Function to generate n sets of initial conditions (th1, w1, th2, w2) all satisfying the same initial energy E"""
+    inits: list[tuple[float, float, float, float]] = []
+
+    # 1. Input parameters
+    m1, m2 = params.M1, params.M2
+    l1, l2 = params.L1, params.L2
+    g = params.G
+    M = m1 + m2
+
+    while len(inits) < n:
+        # 2. Random Angles
+        th1 = np.random.uniform(-np.pi, np.pi)
+        th2 = np.random.uniform(-np.pi, np.pi)
+
+        # 3. Check Potential Energy Viability
+        V = -M * g * l1 * np.cos(th1) - m2 * g * l2 * np.cos(th2)
+        
+        # If Potential Energy is greater than Total Energy, kinetic energy would be negative (impossible)
+        if V > E:
+            continue
+
+        # 4. Determine Kinetic Energy Bounds (w1_max)
+        # Using the discriminant condition B^2 - AC >= 0
+        delta = th1 - th2
+        term_denominator = l1**2 * (m1 + m2 * (np.sin(delta)**2))
+        
+        # Ensure we don't divide by zero (though physically unlikely with mass > 0)
+        if term_denominator <= 0:
+            continue
+            
+        w1_max = np.sqrt((2 * (E - V)) / term_denominator)
+
+        # 5. Sample w1
+        w1 = np.random.uniform(-w1_max, w1_max)
+
+        # 6. Calculate Coefficients (A, B, C)
+        # From Eq 11: A*w2^2 + 2*B*w2 + C = 0
+        A = m2 * (l2**2)
+        B = m2 * l1 * l2 * w1 * np.cos(delta)
+        C = M * (l1**2) * (w1**2) - 2 * (E - V)
+
+        # 7. Solve for w2
+        discriminant = B**2 - A * C
+        
+        # Numerical stability check: strictly, discriminant >= 0 due to w1_max calculation, 
+        # but floating point errors might produce slightly negative numbers near zero.
+        if discriminant < 0:
+            discriminant = 0.0
+            
+        root = np.sqrt(discriminant)
+        
+        # Randomly select (+) or (-) solution
+        sign = np.random.choice([-1.0, 1.0])
+        w2 = (-B + sign * root) / A
+
+        # 8. Store Valid State
+        # Order: [theta_1, w1, theta_2, w2]
+        inits.append((th1, w1, th2, w2))
+
+    return inits
+
+
+def generate_initial_conditions_ERRONEOUS(
+    E: float,
+    n: int,
     params: PendulumParams,
     rng: np.random.Generator | None = None,
     initial_push: bool = True,
@@ -365,8 +432,8 @@ def generate_initial_conditions(
 
 def main() -> None:
     params = PendulumParams()
-    target_energy = 12.0  # Joules
-    init_conditions = generate_initial_conditions(target_energy, 1_000, params, initial_push=False)
+    target_energy = 120.0  # Joules
+    init_conditions = generate_initial_conditions(target_energy, 1_000, params)
     output_paths = [generate_traj(params, init_state) for init_state in init_conditions]
     print(f"\nSaved {len(output_paths)} trajectories.")
     # print(init_conditions)
