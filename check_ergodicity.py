@@ -12,6 +12,12 @@ import numpy as np
 
 SUPPORTED_EXTENSIONS = {".csv", ".txt", ".npy", ".npz"}
 IGNORED_FILENAMES = {"readme.txt"}
+PI2 = 2 * np.pi
+
+
+def _wrap_to_pi(arr: np.ndarray) -> np.ndarray:
+    """Wrap angles to [-pi, pi). Keeps statistics bounded for periodic data."""
+    return (arr + np.pi) % PI2 - np.pi
 
 
 def _ensure_time_series(array: np.ndarray) -> np.ndarray:
@@ -108,8 +114,9 @@ def compute_ergodicity_stats(folder: str, fnc: Callable[[np.ndarray, np.ndarray]
             skipped += 1
             continue
 
-        theta1 = np.unwrap(theta1)
-        theta2 = np.unwrap(theta2)
+        # Use wrapped angles so statistics stay within [-pi, pi) for angular observables.
+        theta1 = _wrap_to_pi(theta1)
+        theta2 = _wrap_to_pi(theta2)
         obs_values = _ensure_time_series(fnc(theta1, theta2))
         if obs_values.size == 0:
             raise ValueError(f"Observable evaluation returned an empty array for {path.name}")
