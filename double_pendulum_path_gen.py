@@ -243,15 +243,27 @@ def _build_output_path(init_state: Iterable[float]) -> Path:
 
 
 def generate_traj(params: PendulumParams, init_state: Sequence[float], verbose = True) -> Path:
-    """Generate a trajectory CSV containing theta1/theta2 columns."""
+    """Generate a trajectory CSV containing theta1, w1, theta2, w2 columns."""
     normalized_state = normalize_init_state(init_state)
     _, traj = integrate_trajectory(params, normalized_state)
-    angles = traj[:, [0, 2]]
-    angles = ((angles + np.pi) % (2 * np.pi)) - np.pi  # wrap to [-pi, pi]
+    
+    # 1. Create a copy of the full trajectory (all 4 columns)
+    #    Assumes order: [theta1, w1, theta2, w2]
+    output_data = traj.copy()
+
+    # 2. Wrap ONLY the angles (columns 0 and 2) to [-pi, pi]
+    #    Do NOT wrap the velocities (columns 1 and 3)
+    output_data[:, 0] = ((output_data[:, 0] + np.pi) % (2 * np.pi)) - np.pi
+    output_data[:, 2] = ((output_data[:, 2] + np.pi) % (2 * np.pi)) - np.pi
+
     output_path = _build_output_path(normalized_state)
-    np.savetxt(output_path, angles, delimiter=",", header="theta1,theta2", comments="")
+    
+    # 3. Save full array with updated header
+    np.savetxt(output_path, output_data, delimiter=",", header="theta1,w1,theta2,w2", comments="")
+    
     _register_initial_condition(normalized_state)
     _write_run_readme()
+    
     if verbose:
         print(f"Saved trajectory to {output_path}")
     return output_path
