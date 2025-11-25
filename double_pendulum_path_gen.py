@@ -150,9 +150,8 @@ def integrate_trajectory_euler(params: PendulumParams, init_state_deg: Sequence[
 
     return t, trajectory
 
-def integrate_trajectory(params: PendulumParams, init_state_deg: Sequence[float]) -> tuple[np.ndarray, np.ndarray]:
-    init_state_deg = normalize_init_state(init_state_deg)
-    y0 = np.radians(np.array(init_state_deg, dtype=float))
+def integrate_trajectory(params: PendulumParams, init_state: Sequence[float]) -> tuple[np.ndarray, np.ndarray]:
+    """Functions that integrates the trajectory using Runge Kutta """
 
     def f(t, y):
         return derivs(t, y, params)
@@ -160,7 +159,7 @@ def integrate_trajectory(params: PendulumParams, init_state_deg: Sequence[float]
     sol = solve_ivp(
         f,
         t_span=(0.0, params.t_stop),
-        y0=y0,
+        y0=init_state,
         method="DOP853",   # or "RK45"
         max_step=params.dt # controls resolution of saved points
     )
@@ -243,130 +242,103 @@ def _build_output_path(init_state: Iterable[float]) -> Path:
 
 
 def generate_traj(params: PendulumParams, init_state: Sequence[float], verbose = True) -> Path:
-    """Generate a trajectory CSV containing theta1/theta2 columns."""
+    """Generate a trajectory CSV containing theta1, w1, theta2, w2 columns."""
     normalized_state = normalize_init_state(init_state)
-    _, traj = integrate_trajectory(params, normalized_state)
-    angles = traj[:, [0, 2]]
-    angles = ((angles + np.pi) % (2 * np.pi)) - np.pi  # wrap to [-pi, pi]
+    t, traj = integrate_trajectory(params, normalized_state)
+    
+    # 1. Create a copy of the full trajectory (all 4 columns)
+    #    Assumes order: [theta1, w1, theta2, w2]
+    output_data = traj.copy()
+
+    # 2. Wrap ONLY the angles (columns 0 and 2) to [-pi, pi]
+    #    Do NOT wrap the velocities (columns 1 and 3)
+    output_data[:, 0] = ((output_data[:, 0] + np.pi) % (2 * np.pi)) - np.pi
+    output_data[:, 2] = ((output_data[:, 2] + np.pi) % (2 * np.pi)) - np.pi
+
     output_path = _build_output_path(normalized_state)
-    np.savetxt(output_path, angles, delimiter=",", header="theta1,theta2", comments="")
+    
+    # 3. Save full array with updated header
+    np.savetxt(output_path, output_data, delimiter=",", header="theta1,w1,theta2,w2", comments="")
+    
     _register_initial_condition(normalized_state)
     _write_run_readme()
+    
     if verbose:
-        print(f"Saved trajectory to {output_path}")
+        print(f"Saved trajectory to {output_path}. Final time: t={t[-1]}")
     return output_path
 
 
 def generate_initial_conditions(
     E: float,
     n: int,
-    params: PendulumParams,
-    rng: np.random.Generator | None = None,
-    initial_push: bool = True,
+    params: PendulumParams
 ) -> list[tuple[float, float, float, float]]:
-    """
-    Generate n initial (theta1_deg, w1, theta2_deg, w2) tuples near/on the energy surface E.
-
-    If initial_push is True:
-        - Same logic as before: pick angles, then assign kinetic energy so that
-          total energy equals E (up to numerical error).
-
-    If initial_push is False:
-        - Set w1 = w2 = 0 and choose (theta1, theta2) such that V(theta1, theta2) = E.
-        - If E is unattainable as pure potential (w1=w2=0), raise a ValueError.
-    """
-    rng = rng or np.random.default_rng()
+    """Function to generate n sets of initial conditions (th1, w1, th2, w2) all satisfying the same initial energy E"""
     inits: list[tuple[float, float, float, float]] = []
 
+    # 1. Input parameters
     m1, m2 = params.M1, params.M2
     l1, l2 = params.L1, params.L2
     g = params.G
-
-    A = (m1 + m2) * g * l1
-    B = m2 * g * l2
-
-    # Potential range with zero velocities
-    V_min = -A - B
-    V_max = A + B
-
-    if not initial_push:
-        # With w1 = w2 = 0, energy must lie in [V_min, V_max]
-        if not (V_min <= E <= V_max):
-            raise ValueError(
-                f"Requested energy E={E:.6g} is unattainable with w1=w2=0. "
-                f"Allowed range is [{V_min:.6g}, {V_max:.6g}]."
-            )
-
-    attempts = 0
-    max_attempts = n * 200  # a bit more generous for the no-push geometry
+    M = m1 + m2
 
     while len(inits) < n:
-        attempts += 1
-        if attempts > max_attempts:
-            raise RuntimeError(
-                f"Could not generate {n} initial conditions within {max_attempts} attempts."
-            )
+        # 2. Random Angles
+        th1 = np.random.uniform(-np.pi, np.pi)
+        th2 = np.random.uniform(-np.pi, np.pi)
 
-        if initial_push:
-            # --- Original "push" logic: pick angles, then give them velocities ---
-            th1 = rng.uniform(0, 2 * np.pi)
-            th2 = rng.uniform(0, 2 * np.pi)
+        # 3. Check Potential Energy Viability
+        V = -M * g * l1 * np.cos(th1) - m2 * g * l2 * np.cos(th2)
+        
+        # If Potential Energy is greater than Total Energy, kinetic energy would be negative (impossible)
+        if V > E:
+            continue
 
-            V = -(m1 + m2) * g * l1 * math.cos(th1) - m2 * g * l2 * math.cos(th2)
-            KE_avail = E - V
-            if KE_avail <= 0:
-                # This angle pair is too "high" in potential for the given E
-                continue
+        # 4. Determine Kinetic Energy Bounds (w1_max)
+        # Using the discriminant condition B^2 - AC >= 0
+        delta = th1 - th2
+        term_denominator = l1**2 * (m1 + m2 * (np.sin(delta)**2))
+        
+        # Ensure we don't divide by zero (though physically unlikely with mass > 0)
+        if term_denominator <= 0:
+            continue
+            
+        w1_max = np.sqrt((2 * (E - V)) / term_denominator)
 
-            r = rng.random() # random number between 0 and 1 
-            KE1 = r * KE_avail
-            KE2 = (1 - r) * KE_avail
+        # 5. Sample w1
+        w1 = np.random.uniform(-w1_max, w1_max)
 
-            w1 = math.sqrt(2 * KE1 / ((m1 + m2) * l1 * l1))
-            w2 = math.sqrt(2 * KE2 / (m2 * l2 * l2))
+        # 6. Calculate Coefficients (A, B, C)
+        # From Eq 11: A*w2^2 + 2*B*w2 + C = 0
+        A = m2 * (l2**2)
+        B = m2 * l1 * l2 * w1 * np.cos(delta)
+        C = M * (l1**2) * (w1**2) - 2 * (E - V)
 
-            # Randomize direction
-            w1 = math.copysign(w1, rng.normal())
-            w2 = math.copysign(w2, rng.normal())
+        # 7. Solve for w2
+        discriminant = B**2 - A * C
+        
+        # Numerical stability check: strictly, discriminant >= 0 due to w1_max calculation, 
+        # but floating point errors might produce slightly negative numbers near zero.
+        if discriminant < 0:
+            discriminant = 0.0
+            
+        root = np.sqrt(discriminant)
+        
+        # Randomly select (+) or (-) solution
+        sign = np.random.choice([-1.0, 1.0])
+        w2 = (-B + sign * root) / A
 
-        else:
-            # --- No initial push: solve for angles on the level set V(theta1,theta2)=E ---
-            th1 = rng.uniform(0, 2 * np.pi)
+        # 8. Store Valid State
+        # Order: [theta_1, w1, theta_2, w2]
+        inits.append((th1, w1, th2, w2))
 
-            # Solve for cos(th2) from -A cos(th1) - B cos(th2) = E
-            cos_th1 = math.cos(th1)
-            cos_th2 = -(E + A * cos_th1) / B
-
-            if abs(cos_th2) > 1.0:
-                # For this th1, the level set doesn't intersect; try again.
-                continue
-
-            # Two possible th2 values; choose one at random
-            base = math.acos(max(-1.0, min(1.0, cos_th2)))  # clamp for safety
-            if rng.random() < 0.5:
-                th2 = base
-            else:
-                th2 = 2 * math.pi - base
-
-            w1 = 0.0
-            w2 = 0.0
-
-        inits.append((math.degrees(th1), w1, math.degrees(th2), w2))
-
-    _start_new_run(E, inits)
-    if inits:
-        try:
-            lyap_estimate = estimate_lyapunov_exponent(params, inits[0])
-            _RUN_CONTEXT.lyapunov_exponent = lyap_estimate
-        except Exception as exc:  # pragma: no cover - diagnostic only
-            print(f"Warning: failed to estimate Lyapunov exponent: {exc}")
     return inits
 
 
 def main() -> None:
     params = PendulumParams()
     target_energy = 12.0  # Joules
-    init_conditions = generate_initial_conditions(target_energy, 1_000, params, initial_push=False)
+    init_conditions = generate_initial_conditions(target_energy, 1_000, params)
     output_paths = [generate_traj(params, init_state) for init_state in init_conditions]
     print(f"\nSaved {len(output_paths)} trajectories.")
     # print(init_conditions)
