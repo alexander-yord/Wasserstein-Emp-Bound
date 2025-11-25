@@ -136,14 +136,12 @@ def normalize_init_state(init_state: Sequence[float]) -> Tuple[float, float, flo
     return cast(Tuple[float, float, float, float], tuple(normalized))
 
 
-def integrate_trajectory_euler(params: PendulumParams, init_state_deg: Sequence[float]) -> tuple[np.ndarray, np.ndarray]:
+def integrate_trajectory_euler(params: PendulumParams, init_state: Sequence[float]) -> tuple[np.ndarray, np.ndarray]:
     """Integrate the equations of motion using a simple Euler method."""
-    init_state_deg = normalize_init_state(init_state_deg)
-    state = np.radians(np.array(init_state_deg, dtype=float))
 
     t = np.arange(0, params.t_stop, params.dt)
     trajectory = np.empty((len(t), 4))
-    trajectory[0] = state
+    trajectory[0] = init_state
 
     for i in range(1, len(t)):
         trajectory[i] = trajectory[i - 1] + derivs(t[i - 1], trajectory[i - 1], params) * params.dt
@@ -170,7 +168,7 @@ def integrate_trajectory(params: PendulumParams, init_state: Sequence[float]) ->
 
 def estimate_lyapunov_exponent(
     params: PendulumParams,
-    init_state_deg: Sequence[float],
+    init_state: Sequence[float],
     perturbation_deg: float = 1e-3,
 ) -> float:
     """
@@ -178,7 +176,7 @@ def estimate_lyapunov_exponent(
 
     The approximation is crude but provides a qualitative sense of chaos at the requested energy level.
     """
-    base_state = normalize_init_state(init_state_deg)
+    base_state = normalize_init_state(init_state)
     perturbed_state = list(base_state)
     perturbed_state[0] += perturbation_deg
 
