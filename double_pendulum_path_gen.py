@@ -335,7 +335,7 @@ def generate_initial_conditions(
 
 def main() -> None:
     params = PendulumParams()
-    target_energy = 12.0  # Joules
+    target_energy = 120.0  # Joules
     init_conditions = generate_initial_conditions(target_energy, 1_000, params)
     output_paths = [generate_traj(params, init_state) for init_state in init_conditions]
     print(f"\nSaved {len(output_paths)} trajectories.")
