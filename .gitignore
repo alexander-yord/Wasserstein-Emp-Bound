@@ -2,3 +2,4 @@ paths*/
 .DS_Store
 __pycache__/
 AVMs*
+gaussian_empirical_process_output*
