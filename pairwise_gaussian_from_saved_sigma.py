@@ -13,8 +13,8 @@ PATH_GROUPS = ("paths1", "paths2")
 
 @dataclass(frozen=True)
 class Config:
-    input_root: Path = Path("gaussian_empirical_process_output2")
-    output_root: Path = Path("pairwise_gaussian_estimate1")
+    input_root: Path = Path("gaussian_empirical_process_output6")
+    output_root: Path = Path("pairwise_gaussian_estimate6")
     n_gaussian_sims: int = 5000
     random_seed: int = 123
 
